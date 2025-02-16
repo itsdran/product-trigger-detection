@@ -2,6 +2,9 @@ import cv2
 import numpy as np
 from skimage.filters import threshold_otsu
 
+# Define boundary offset (50 pixels above and below the detected line)
+BOUNDARY_OFFSET = 50
+
 def detect_line(frame, stored_line_y):
     """Detect highest horizontal line in frame using edge detection"""
     if stored_line_y is not None:
@@ -28,10 +31,11 @@ def detect_line(frame, stored_line_y):
 
         return best_line, min_y
 
-    return None, None
+    # Default to middle of the frame if no line is detected
+    return None, height // 2  
 
 def detect_crossing_objects(frame, horizontal_line):
-    """Detect objects that cross the horizontal line"""
+    """Detect objects crossing the horizontal line within the boundary"""
     if horizontal_line is None:
         return [], np.zeros(frame.shape[:2], dtype=np.uint8)
 
@@ -52,16 +56,19 @@ def detect_crossing_objects(frame, horizontal_line):
     valid_contours = []
     object_mask = np.zeros_like(gray)
 
+    upper_boundary = horizontal_line - BOUNDARY_OFFSET
+    lower_boundary = horizontal_line + BOUNDARY_OFFSET
+
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area > 1000:  
+        if area > 500:  
             x, y, w, h = cv2.boundingRect(contour)
 
             object_bottom = y + h  
             object_top = y  
 
-            # Trigger only when object crosses the horizontal line
-            if object_top < horizontal_line < object_bottom:
+            # Object must be within the boundary and crossing the horizontal line
+            if upper_boundary < object_top < lower_boundary or upper_boundary < object_bottom < lower_boundary:
                 valid_contours.append((x, y, w, h))
                 cv2.drawContours(object_mask, [contour], 0, 255, -1)
 
@@ -82,13 +89,19 @@ while True:
         stored_line_y = line_y  
 
     if stored_line_y is not None:
-        # Draw the detected line (Green)
+        # Draw the detected horizontal line (Green)
         cv2.line(display_frame, (0, stored_line_y), (frame.shape[1], stored_line_y), (0, 255, 0), 2)
 
-    # Detect objects crossing the horizontal line
+        # Draw upper and lower ROI boundaries (Red)
+        cv2.line(display_frame, (0, stored_line_y - BOUNDARY_OFFSET), 
+                 (frame.shape[1], stored_line_y - BOUNDARY_OFFSET), (0, 0, 255), 2)
+        cv2.line(display_frame, (0, stored_line_y + BOUNDARY_OFFSET), 
+                 (frame.shape[1], stored_line_y + BOUNDARY_OFFSET), (0, 0, 255), 2)
+
+    # Detect objects crossing the horizontal line within boundaries
     objects, mask = detect_crossing_objects(frame, stored_line_y)
 
-    # Second view: Completely black until an object crosses
+    # Second view: Completely black until an object crosses within the boundary
     segmented = np.zeros_like(frame)  
 
     if len(objects) > 0:
@@ -100,7 +113,7 @@ while True:
 
     combined = np.hstack((display_frame, segmented))
 
-    cv2.imshow('Restricted Detection', combined)
+    cv2.imshow('Product Detection', combined)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
